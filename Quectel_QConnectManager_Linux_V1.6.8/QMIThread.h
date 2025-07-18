@@ -1,5 +1,5 @@
 /*
-    Copyright 2023 Quectel Wireless Solutions Co.,Ltd
+    Copyright 2025 Quectel Wireless Solutions Co.,Ltd
 
     Quectel hereby grants customers of Quectel a license to use, modify,
     distribute and publish the Software in binary form provided that
@@ -403,6 +403,33 @@ enum
 	HARDWARE_USB,
 	HARDWARE_IPA,
 };
+
+#ifdef USE_IPC_MSG_STATUS_IND
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#define MSG_FILE "/etc/passwd"
+#define MSG_TYPE_IPC 1
+#define MSGBUFFSZ 16
+struct message
+{
+    long mtype;
+    char mtext[MSGBUFFSZ];
+};
+
+enum
+{
+    QCM_PARA_CONFIG_QUERY = 1,
+    QCM_NETWORK_IPV4_CONNECTED,
+    QCM_NETWORK_IPV6_CONNECTED,
+    QCM_NETWORK_IPV4_DISCONNECTED,
+    QCM_NETWORK_IPV6_DISCONNECTED,
+    QCM_PREPARE_START_DAIL,
+    QCM_PREPARE_DAIL_FIAL,
+    QCM_PREPARE_DAIL_SUCC,
+    QCM_PREPARE_RESTART_DAIL,
+    QCM_PROCESS_EXIT,
+};
+#endif
 
 enum
 {

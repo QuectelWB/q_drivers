@@ -1,11 +1,23 @@
 Release Notes
 
+[V1.6.8]
+Date:   3/4/2025
+enhancement:
+  1. add QMI dialing status report
+fix:
+  1. fix some bugs
+
+[V1.6.7]
+Date:   5/17/2024
+enhancement:
+  1. optimize -a parameter
+fix:
+  1. fix the multiple dialing issue on the SDX35 platform
+
 [V1.6.6]
 Date:   1/12/2024
 enhancement:
   1. support SDX35 platform
-fix:
-
   
 [V1.6.4]
 Date:   9/7/2022

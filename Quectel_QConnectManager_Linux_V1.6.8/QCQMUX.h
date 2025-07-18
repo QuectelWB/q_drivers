@@ -1,5 +1,5 @@
 /*
-    Copyright 2023 Quectel Wireless Solutions Co.,Ltd
+    Copyright 2025 Quectel Wireless Solutions Co.,Ltd
 
     Quectel hereby grants customers of Quectel a license to use, modify,
     distribute and publish the Software in binary form provided that
@@ -3966,6 +3966,17 @@ typedef struct _QMIUIM_GET_CARD_STATUS_RESP_MSG
 #define UIM_CARD_STATE_PRESENT    0x01
 #define UIM_CARD_STATE_ERROR      0x02
 
+typedef struct _QMIUIM_APP_INFO
+{
+   UCHAR  AppType;
+   UCHAR  AppState;
+   UCHAR  PersoState;
+   UCHAR  PersoFeature;
+   UCHAR  PersoRetries;
+   UCHAR  PersoUnblockRetries;
+   UCHAR  AIDLength;
+} __attribute__ ((packed)) QMIUI_APP_INFO;
+
 typedef struct _QMIUIM_CARD_STATUS
 {
    UCHAR  TLVType;
@@ -3981,13 +3992,7 @@ typedef struct _QMIUIM_CARD_STATUS
    UCHAR  UPUKRetries;
    UCHAR  ErrorCode;
    UCHAR  NumApp;
-   UCHAR  AppType;
-   UCHAR  AppState;
-   UCHAR  PersoState;
-   UCHAR  PersoFeature;
-   UCHAR  PersoRetries;
-   UCHAR  PersoUnblockRetries;
-   UCHAR  AIDLength;
+   QMIUI_APP_INFO APP_INFO;
 } __attribute__ ((packed)) QMIUIM_CARD_STATUS, *PQMIUIM_CARD_STATUS;
 
 typedef struct _QMIUIM_PIN_STATE

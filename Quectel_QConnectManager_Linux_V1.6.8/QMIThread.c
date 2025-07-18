@@ -1,5 +1,5 @@
 /*
-    Copyright 2023 Quectel Wireless Solutions Co.,Ltd
+    Copyright 2025 Quectel Wireless Solutions Co.,Ltd
 
     Quectel hereby grants customers of Quectel a license to use, modify,
     distribute and publish the Software in binary form provided that
@@ -44,6 +44,9 @@
         } \
 } while(0)
 
+#define UIM_APP_TYPE_CSIM   0x04
+#define UIM_APP_TYPE_USIM   0x02
+
 static uint32_t WdsConnectionIPv4Handle = 0;
 static uint32_t WdsConnectionIPv6Handle = 0;
 static int s_is_cdma = 0;
@@ -81,7 +84,6 @@ PQMI_TLV_HDR GetTLV (PQCQMUX_MSG_HDR pQMUXMsgHdr, int TLVType) {
         } else  if (pTLVHdr->TLVType == TLVType) {
             return pTLVHdr;
         }
-
         Length -= (le16_to_cpu((pTLVHdr->TLVLength)) + sizeof(QMI_TLV_HDR));
         pTLVHdr = (PQMI_TLV_HDR)(((UCHAR *)pTLVHdr) + le16_to_cpu(pTLVHdr->TLVLength) + sizeof(QMI_TLV_HDR));
     }
@@ -973,12 +975,12 @@ static int requestGetSIMStatus(SIM_Status *pSIMStatus) { //RIL_REQUEST_GET_SIM_S
 
     err = QmiThreadSendQMI(pRequest, &pResponse);
     qmi_rsp_check_and_return();
-
     *pSIMStatus = SIM_ABSENT;
     if (s_9x07)
     {
         PQMIUIM_CARD_STATUS pCardStatus = NULL;
         PQMIUIM_PIN_STATE pPINState = NULL;
+        QMIUI_APP_INFO *appinfo = NULL;
         UCHAR CardState = 0x01;
         UCHAR PIN1State = QMI_PIN_STATUS_NOT_VERIF;
         //UCHAR PIN1Retries;
@@ -988,9 +990,19 @@ static int requestGetSIMStatus(SIM_Status *pSIMStatus) { //RIL_REQUEST_GET_SIM_S
         //UCHAR PUK2Retries;
 
         pCardStatus = (PQMIUIM_CARD_STATUS)GetTLV(&pResponse->MUXMsg.QMUXMsgHdr, 0x10);
+
         if (pCardStatus != NULL)
         {
-            pPINState = (PQMIUIM_PIN_STATE)((PUCHAR)pCardStatus + sizeof(QMIUIM_CARD_STATUS) + pCardStatus->AIDLength);
+            pPINState = (PQMIUIM_PIN_STATE)((PUCHAR)pCardStatus + sizeof(QMIUIM_CARD_STATUS) + pCardStatus->APP_INFO.AIDLength);
+            for(int app_index = 0; app_index < pCardStatus->NumApp - 1; app_index++)
+            {
+                if (pCardStatus->APP_INFO.AppType != UIM_APP_TYPE_USIM)
+                {
+                    appinfo = (QMIUI_APP_INFO *)((PUCHAR)pPINState + sizeof(QMIUIM_PIN_STATE));
+                    pPINState = (PQMIUIM_PIN_STATE)((PUCHAR)appinfo + sizeof(QMIUI_APP_INFO) + appinfo->AIDLength);
+                }
+            }
+
             CardState  = pCardStatus->CardState;
             if (CardState == UIM_CARD_STATE_PRESENT) {
                 if (pPINState->UnivPIN == 1)
@@ -1094,6 +1106,8 @@ static int requestGetICCID(void) { //RIL_REQUEST_GET_IMSI
     PQMUX_MSG pMUXMsg;
     PQMIUIM_CONTENT pUimContent;
     int err;
+
+    //dbg_time("enter requestGetICCID_2");
 
     if (s_9x07) {
         pRequest = ComposeQMUXMsg(QMUX_TYPE_UIM, QMIUIM_READ_TRANSPARENT_REQ, UimReadTransparentIMSIReqSend, (void *)"EF_ICCID");
@@ -1452,6 +1466,8 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
     s_is_cdma = 0;
     s_5g_type = WWAN_DATA_CLASS_NONE;
     s_hdr_personality = 0;
+    //dbg_time("pServiceStatusInfo->TLVType:%d\n", pServiceStatusInfo->TLVType);
+    //dbg_time("remainingLen:%ld\n", remainingLen);
     while (remainingLen > 0) {
         switch (pServiceStatusInfo->TLVType) {
         case 0x10: // CDMA
@@ -1513,6 +1529,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if (pNr5gSystemInfo->network_id_valid == 0x01) {
                 MobileCountryCode = (USHORT)char2ushort(pNr5gSystemInfo->MCC);
                 MobileNetworkCode = (USHORT)char2ushort(pNr5gSystemInfo->MNC);
+                //dbg_time("%d", __LINE__);
             }
             break;
         case 0x4E: //Additional LTE System Info - Availability of Dual Connectivity of E-UTRA with NR5G
@@ -1551,6 +1568,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if (pCdmaSystemInfo->NetworkIdValid == 0x01) {
                 MobileCountryCode = (USHORT)char2ushort(pCdmaSystemInfo->MCC);
                 MobileNetworkCode = (USHORT)char2ushort(pCdmaSystemInfo->MNC);
+                //dbg_time("%d", __LINE__);
             }
             break;
         case 0x16: // HDR
@@ -1581,6 +1599,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if(!requestGetHomeNetwork(&cmda_mcc, &cdma_mnc,NULL, NULL) && cmda_mcc) {
                 quectel_convert_cdma_mcc_2_ascii_mcc(&MobileCountryCode, cmda_mcc);
                 quectel_convert_cdma_mnc_2_ascii_mnc(&MobileNetworkCode, cdma_mnc);
+                //dbg_time("%d", __LINE__);
             }
             break;
         case 0x17: // GSM
@@ -1602,6 +1621,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if (pGsmSystemInfo->NetworkIdValid == 0x01) {
                 MobileCountryCode = (USHORT)char2ushort(pGsmSystemInfo->MCC);
                 MobileNetworkCode = (USHORT)char2ushort(pGsmSystemInfo->MNC);
+                //dbg_time("%d", __LINE__);
             }
             break;
         case 0x18: // WCDMA
@@ -1623,6 +1643,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if (pWcdmaSystemInfo->NetworkIdValid == 0x01) {
                 MobileCountryCode = (USHORT)char2ushort(pWcdmaSystemInfo->MCC);
                 MobileNetworkCode = (USHORT)char2ushort(pWcdmaSystemInfo->MNC);
+                //dbg_time("%d", __LINE__);
             }
             break;
         case 0x19: // LTE_SYSTEM_INFO
@@ -1648,6 +1669,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if (pLteSystemInfo->NetworkIdValid == 0x01) {
                 MobileCountryCode = (USHORT)char2ushort(pLteSystemInfo->MCC);
                 MobileNetworkCode = (USHORT)char2ushort(pLteSystemInfo->MNC);
+                //dbg_time("%d", __LINE__);
             }
             break;
         case 0x25: // TDSCDMA
@@ -1669,6 +1691,7 @@ static int requestRegistrationState2(UCHAR *pPSAttachedState) {
             if (pTdscdmaSystemInfo->NetworkIdValid == 0x01) {
                 MobileCountryCode = (USHORT)char2ushort(pTdscdmaSystemInfo->MCC);
                 MobileNetworkCode = (USHORT)char2ushort(pTdscdmaSystemInfo->MNC);
+                //dbg_time("%d", __LINE__);
             }
             break;
         default:

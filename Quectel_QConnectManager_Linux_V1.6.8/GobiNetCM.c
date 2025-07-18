@@ -1,5 +1,5 @@
 /*
-    Copyright 2023 Quectel Wireless Solutions Co.,Ltd
+    Copyright 2025 Quectel Wireless Solutions Co.,Ltd
 
     Quectel hereby grants customers of Quectel a license to use, modify,
     distribute and publish the Software in binary form provided that

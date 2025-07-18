@@ -1,5 +1,5 @@
 /*
-    Copyright 2023 Quectel Wireless Solutions Co.,Ltd
+    Copyright 2025 Quectel Wireless Solutions Co.,Ltd
 
     Quectel hereby grants customers of Quectel a license to use, modify,
     distribute and publish the Software in binary form provided that
@@ -1159,7 +1159,7 @@ static void mbim_dump_ipconfig(MBIM_IP_CONFIGURATION_INFO_T *pInfo, const char *
         gw = (UINT8 *)(&pInfo->DataBuffer[le32toh(pInfo->IPv4GatewayOffset)-sizeof(MBIM_IP_CONFIGURATION_INFO_T)]);
         mbim_debug("%s gw = %u.%u.%u.%u", direction, gw[0], gw[1], gw[2], gw[3]);
     }
-    if (le32toh(pInfo->IPv4ConfigurationAvailable)&0x3) {
+    if (le32toh(pInfo->IPv4ConfigurationAvailable)&0x4) {
         dns1 = (UINT8 *)(&pInfo->DataBuffer[le32toh(pInfo->IPv4DnsServerOffset) -sizeof(MBIM_IP_CONFIGURATION_INFO_T)]);
         mbim_debug("%s dns1 = %u.%u.%u.%u", direction, dns1[0], dns1[1], dns1[2], dns1[3]);
         if (le32toh(pInfo->IPv4DnsServerCount) == 2) {
@@ -1184,7 +1184,7 @@ static void mbim_dump_ipconfig(MBIM_IP_CONFIGURATION_INFO_T *pInfo, const char *
             direction, gw[0], gw[1], gw[2], gw[3], gw[4], gw[5], gw[6], gw[7], \
             gw[8], gw[9], gw[10], gw[11], gw[12], gw[13], gw[14], gw[15]);
     }
-    if (le32toh(pInfo->IPv6ConfigurationAvailable)&0x3) {
+    if (le32toh(pInfo->IPv6ConfigurationAvailable)&0x4) {
         dns1 = (UINT8 *)(&pInfo->DataBuffer[le32toh(pInfo->IPv6DnsServerOffset)-sizeof(MBIM_IP_CONFIGURATION_INFO_T)]);
         mbim_debug("%s dns1 = %02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x", \
             direction, dns1[0], dns1[1], dns1[2], dns1[3], dns1[4], dns1[5], dns1[6], dns1[7], \

@@ -1,5 +1,5 @@
 /*
-    Copyright 2023 Quectel Wireless Solutions Co.,Ltd
+    Copyright 2025 Quectel Wireless Solutions Co.,Ltd
 
     Quectel hereby grants customers of Quectel a license to use, modify,
     distribute and publish the Software in binary form provided that
@@ -22,6 +22,9 @@ static PROFILE_T s_profile;
 int debug_qmi = 0;
 int qmidevice_control_fd[2];
 static int signal_control_fd[2];
+#ifdef USE_IPC_MSG_STATUS_IND
+static int qcm_status_indication_fd[2];
+#endif
 int g_donot_exit_when_modem_hangup = 0;
 extern int ql_ifconfig(int argc, char *argv[]);
 extern int ql_get_netcard_driver_info(const char*);
@@ -80,6 +83,12 @@ static void send_signo_to_main(int signo) {
      if (write(signal_control_fd[0], &signo, sizeof(signo)) == -1) {};
 }
 
+#ifdef USE_IPC_MSG_STATUS_IND
+static void main_send_status_to_fifo(uint8_t status) {
+     if (write(qcm_status_indication_fd[0], &status, sizeof(status)) == -1) {};
+}
+#endif
+
 void qmidevice_send_event_to_main(int triger_event) {
      if (write(qmidevice_control_fd[1], &triger_event, sizeof(triger_event)) == -1) {};
 }
@@ -88,6 +97,134 @@ void qmidevice_send_event_to_main_ext(int triger_event, void *data, unsigned len
      if (write(qmidevice_control_fd[1], &triger_event, sizeof(triger_event)) == -1) {};
      if (write(qmidevice_control_fd[1], data, len) == -1) {};
 }
+
+#ifdef USE_IPC_MSG_STATUS_IND
+static int msg_get()
+{
+    key_t key = ftok(MSG_FILE, 'a');
+    int msgid = msgget(key, IPC_CREAT | 0644);
+
+    if (msgid < 0)
+    {
+        dbg_time("msgget fail: key %d, %s", key, strerror(errno));
+        return -1;
+    }
+    return msgid;
+}
+
+static int msg_rm(int msgid)
+{
+    return msgctl(msgid, IPC_RMID, 0);
+}
+
+static int msg_send(int msgid, long type, const char *msg)
+{
+    struct message info;
+    info.mtype = type;
+    snprintf(info.mtext, MSGBUFFSZ, "%s", msg);
+    if (msgsnd(msgid, (void *)&info, MSGBUFFSZ, IPC_NOWAIT) < 0)
+    {
+        dbg_time("msgsnd faild: msg %s, %s", msg, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+void* qcm_status_thread(void *arg)
+{
+    uint8_t status = 0;
+    int msgid = -1;
+    char buf[MSGBUFFSZ] = {0};
+
+    uint8_t* tmp = arg;
+    if (tmp == NULL)
+    {
+        dbg_time("%s qcm start report status", __func__);
+    }
+
+    if (access(MSG_FILE, F_OK))
+    {
+        dbg_time("%s %s isn't exit", __func__, MSG_FILE);
+        pthread_exit(NULL);
+        return (void*)0;
+    }
+    else
+    {
+        msgid = msg_get();
+        if (msgid < 0)
+        {
+            dbg_time("%s msg_get fail", __func__);
+            pthread_exit(NULL);
+            return (void*)0;
+        }
+    }
+
+    while (1)
+    {
+        struct pollfd pollfds[] = {{qcm_status_indication_fd[1], POLLIN, 0}};
+        int ret;
+
+        do
+        {
+            ret = poll(pollfds, 1,  -1);
+        } while ((ret < 0) && (errno == EINTR));
+
+        if (ret <= 0) {
+            dbg_time("%s poll=%d, errno: %d (%s)", __func__, ret, errno, strerror(errno));
+            break;
+        }
+
+        if (pollfds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+        {
+            dbg_time("%s poll err/hup", __func__);
+            dbg_time("epoll pollfds[0].fd = %d, pollfds[0].events = 0x%04x", pollfds[0].fd, pollfds[0].revents);
+            break;
+        }
+
+        if ((pollfds[0].revents & POLLIN) == 0)
+        {
+            continue;
+        }
+
+        if (read(pollfds[0].fd, &status, sizeof(status)) == sizeof(status))
+        {
+            memset(buf, 0, sizeof(buf));
+            snprintf(buf, sizeof(buf), "%d", status);
+
+            if (msg_send(msgid, MSG_TYPE_IPC, buf) >= 0)
+            {
+                //dbg_time("%s msg_send success msgid = %d  status = %d", __func__, msgid, status);
+            }
+            else
+            {
+                dbg_time("%s msg_send fail", __func__);
+                break;
+            }
+
+            if (status == QCM_PROCESS_EXIT)
+            {
+                dbg_time("%s qcm process exit", __func__);
+                usleep(100000);
+                break;
+            }
+        }
+        else
+        {
+            dbg_time("%s read fail", __func__);
+            break;
+        }
+    }
+
+    if (msg_rm(msgid) < 0)
+    {
+        dbg_time("%s msg_rm fail", __func__);
+    }
+
+    dbg_time("%s exit", __func__);
+    pthread_exit(NULL);
+    return (void*)0;
+}
+#endif
 
 #define MAX_PATH 256
 
@@ -275,6 +412,9 @@ static int qmi_main(PROFILE_T *profile)
     int qmierr = 0;
     const struct request_ops *request_ops = profile ->request_ops;
     pthread_t gQmiThreadID = 0;
+#ifdef USE_IPC_MSG_STATUS_IND
+    pthread_t gQcmStatusThreadID = 0;
+#endif
 
 //sudo apt-get install udhcpc
 //sudo apt-get remove ModemManager
@@ -296,10 +436,24 @@ static int qmi_main(PROFILE_T *profile)
         return 0;
     }
 
+#ifdef USE_IPC_MSG_STATUS_IND
+    if ( socketpair( AF_LOCAL, SOCK_STREAM, 0, qcm_status_indication_fd ) < 0 ) {
+        dbg_time("%s Failed to create thread qcm_status_indication_fd socket pair: %d (%s)", __func__, errno, strerror(errno));
+        return 0;
+    }
+#endif
+
     if ((profile->qmap_mode == 0 || profile->qmap_mode == 1)
         && (!profile->proxy[0] || strstr(profile->qmichannel, "_IPCR"))) {
         kill_brothers(profile->qmichannel);
-     }
+    }
+
+#ifdef USE_IPC_MSG_STATUS_IND
+    if (pthread_create( &gQcmStatusThreadID, 0, qcm_status_thread, NULL) != 0) {
+        dbg_time("%s Failed to create QMIThread: %d (%s)", __func__, errno, strerror(errno));
+        return 0;
+    }
+#endif
 
     if (pthread_create( &gQmiThreadID, 0, profile->qmi_ops->read, (void *)profile) != 0) {
         dbg_time("%s Failed to create QMIThread: %d (%s)", __func__, errno, strerror(errno));
@@ -316,6 +470,10 @@ static int qmi_main(PROFILE_T *profile)
         dbg_time("%s Failed to qmi init: %d (%s)", __func__, errno, strerror(errno));
         return 0;
     }
+
+#ifdef USE_IPC_MSG_STATUS_IND
+    main_send_status_to_fifo(QCM_PARA_CONFIG_QUERY);
+#endif
 
     if (request_ops->requestBaseBandVersion)
         request_ops->requestBaseBandVersion(profile);
@@ -410,6 +568,9 @@ if(profile->usb_dev.idProduct != 0x0316)
                 dbg_time("%s poll err/hup", __func__);
                 dbg_time("epoll fd = %d, events = 0x%04x", fd, revents);
                 main_send_event_to_qmidevice(RIL_REQUEST_QUIT);
+#ifdef USE_IPC_MSG_STATUS_IND
+                main_send_status_to_fifo(QCM_PROCESS_EXIT);
+#endif
                 if (revents & POLLHUP)
                     goto __main_quit;
             }
@@ -433,6 +594,10 @@ if(profile->usb_dev.idProduct != 0x0316)
                                 break;
                             }
 
+#ifdef USE_IPC_MSG_STATUS_IND
+                            main_send_status_to_fifo(QCM_PREPARE_START_DAIL);
+#endif
+
                             if (profile->enable_ipv4 && IPv4ConnectionStatus !=  QWDS_PKT_DATA_CONNECTED) {
                                 qmierr = request_ops->requestSetupDataCall(profile, IpFamilyV4);
 
@@ -450,7 +615,12 @@ if(profile->usb_dev.idProduct != 0x0316)
                                 if (!qmierr) {
                                     qmierr = request_ops->requestGetIPAddress(profile, IpFamilyV4);
                                     if (!qmierr)
+                                    {
                                         IPv4ConnectionStatus = QWDS_PKT_DATA_CONNECTED;
+#ifdef USE_IPC_MSG_STATUS_IND
+                                        main_send_status_to_fifo(QCM_NETWORK_IPV4_CONNECTED);
+#endif
+                                    }
                                 }
                                         
                             }
@@ -465,7 +635,12 @@ if(profile->usb_dev.idProduct != 0x0316)
                                     if (!qmierr) {
                                         qmierr = request_ops->requestGetIPAddress(profile, IpFamilyV6);
                                         if (!qmierr)
+                                        {
                                             IPv6ConnectionStatus = QWDS_PKT_DATA_CONNECTED;
+#ifdef USE_IPC_MSG_STATUS_IND
+                                            main_send_status_to_fifo(QCM_NETWORK_IPV6_CONNECTED);
+#endif
+                                        }
                                     }
                                 }
                             }
@@ -482,10 +657,16 @@ if(profile->usb_dev.idProduct != 0x0316)
                                 dbg_time("try to requestSetupDataCall %ld second later", SetupCallAllowTime);
                                 alarm(SetupCallAllowTime);
                                 SetupCallAllowTime = SetupCallAllowTime*1000 + clock_msec();
+#ifdef USE_IPC_MSG_STATUS_IND
+                                main_send_status_to_fifo(QCM_PREPARE_RESTART_DAIL);
+#endif
                             }
                             else if (IPv4ConnectionStatus ==  QWDS_PKT_DATA_CONNECTED || IPv6ConnectionStatus ==  QWDS_PKT_DATA_CONNECTED) {
                                 SetupCallFail = 0;
                                 SetupCallAllowTime = clock_msec();
+#ifdef USE_IPC_MSG_STATUS_IND
+                                main_send_status_to_fifo(QCM_PREPARE_DAIL_SUCC);
+#endif
                             }
                         break;
 
@@ -567,7 +748,27 @@ if(profile->usb_dev.idProduct != 0x0316)
                                     link |= (1<<IpFamilyV6);
                                 usbnet_link_change(link, profile);
                             }
-                            
+
+#ifdef USE_IPC_MSG_STATUS_IND
+                            if ((profile->enable_ipv4 && IPv4ConnectionStatus ==  QWDS_PKT_DATA_DISCONNECTED))
+                            {
+                                main_send_status_to_fifo(QCM_NETWORK_IPV4_DISCONNECTED);
+                            }
+                            else
+                            {
+                                main_send_status_to_fifo(QCM_NETWORK_IPV4_CONNECTED);
+                            }
+
+                            if ((profile->enable_ipv6 && IPv6ConnectionStatus ==  QWDS_PKT_DATA_DISCONNECTED))
+                            {
+                                main_send_status_to_fifo(QCM_NETWORK_IPV6_DISCONNECTED);
+                            }
+                            else
+                            {
+                                main_send_status_to_fifo(QCM_NETWORK_IPV6_CONNECTED);
+                            }
+#endif
+
                             if ((profile->enable_ipv4 && IPv4ConnectionStatus ==  QWDS_PKT_DATA_DISCONNECTED)
                                 || (profile->enable_ipv6 && IPv6ConnectionStatus ==  QWDS_PKT_DATA_DISCONNECTED)) {
                                 send_signo_to_main(SIG_EVENT_START);
@@ -587,6 +788,9 @@ if(profile->usb_dev.idProduct != 0x0316)
                                 }
                             }
                             usbnet_link_change(0, profile);
+#ifdef USE_IPC_MSG_STATUS_IND
+                            main_send_status_to_fifo(QCM_PROCESS_EXIT);
+#endif
                             if (profile->qmi_ops->deinit)
                                 profile->qmi_ops->deinit();
                             main_send_event_to_qmidevice(RIL_REQUEST_QUIT);
@@ -672,10 +876,20 @@ __main_quit:
         dbg_time("%s Error joining to listener thread (%s)", __func__, strerror(errno));
     }
 
+#ifdef USE_IPC_MSG_STATUS_IND
+    if (gQcmStatusThreadID && pthread_join(gQcmStatusThreadID, NULL)) {
+        dbg_time("%s Error joining to gQcmStatusThreadID (%s)", __func__, strerror(errno));
+    }
+#endif
+
     close(signal_control_fd[0]);
     close(signal_control_fd[1]);
     close(qmidevice_control_fd[0]);
     close(qmidevice_control_fd[1]);
+#ifdef USE_IPC_MSG_STATUS_IND
+    close(qcm_status_indication_fd[0]);
+    close(qcm_status_indication_fd[1]);
+#endif
     dbg_time("%s exit", __func__);
 
     return 0;
@@ -948,7 +1162,7 @@ int main(int argc, char *argv[])
     int ret;
     PROFILE_T *ctx = &s_profile;
 
-    dbg_time("QConnectManager_Linux_V1.6.7");
+    dbg_time("QConnectManager_Linux_V1.6.8");
 
     ret = parse_user_input(argc, argv, ctx);
     if (!ret)
